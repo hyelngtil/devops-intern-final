@@ -1,0 +1,3 @@
+whoami
+date
+df -h
