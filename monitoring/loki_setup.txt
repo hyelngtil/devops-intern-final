@@ -1,0 +1,150 @@
+GRAFANA LOKI SETUP GUIDE
+========================
+
+Author: Hyelngtil Isaac
+Date: November 25, 2025
+
+STEP 1: START LOKI
+------------------
+Using Docker to run Loki locally:
+
+docker run -d \
+  --name loki \
+  -p 3100:3100 \
+  grafana/loki:latest
+
+Verify Loki is running:
+curl http://localhost:3100/ready
+
+Expected output: "ready"
+
+
+STEP 2: START PROMTAIL (Log Shipper)
+------------------------------------
+Promtail collects logs and sends them to Loki.
+
+Create promtail-config.yml:
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://localhost:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        target_label: 'container'
+
+Run Promtail:
+
+docker run -d \
+  --name promtail \
+  -v $(pwd)/promtail-config.yml:/etc/promtail/config.yml \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  grafana/promtail:latest \
+  -config.file=/etc/promtail/config.yml
+
+
+STEP 3: VIEW LOGS
+-----------------
+Query logs using LogCLI or curl:
+
+# Install LogCLI (optional)
+# Or use curl to query Loki API
+
+# Query all logs from last hour
+curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
+  --data-urlencode 'query={job="docker"}' \
+  | jq .
+
+# Query logs from specific container
+curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
+  --data-urlencode 'query={container="devops-hello"}' \
+  | jq .
+
+
+STEP 4: GRAFANA DASHBOARD (OPTIONAL)
+------------------------------------
+For visualization, run Grafana:
+
+docker run -d \
+  --name grafana \
+  -p 3000:3000 \
+  grafana/grafana:latest
+
+Access Grafana at: http://localhost:3000
+Default credentials: admin/admin
+
+Add Loki as data source:
+- Configuration > Data Sources > Add Loki
+- URL: http://loki:3100
+- Save & Test
+
+Create dashboard to visualize logs!
+
+
+NOMAD INTEGRATION
+-----------------
+To send Nomad job logs to Loki, use the Docker log driver:
+
+In your Nomad job file, add:
+
+task "hello" {
+  driver = "docker"
+  
+  config {
+    image = "devops-hello:v1"
+    
+    logging {
+      type = "loki"
+      config {
+        loki-url = "http://localhost:3100/loki/api/v1/push"
+        labels = "job=devops-hello"
+      }
+    }
+  }
+}
+
+
+VERIFICATION
+------------
+1. Loki running: curl http://localhost:3100/ready
+2. Promtail collecting logs: docker logs promtail
+3. Query returns data: curl http://localhost:3100/loki/api/v1/label
+4. Can see container logs in queries
+
+
+TROUBLESHOOTING
+---------------
+Issue: Loki not receiving logs
+Solution: Check Promtail logs, verify Docker socket permissions
+
+Issue: Cannot query logs
+Solution: Ensure time range includes recent logs (last 1-2 hours)
+
+Issue: "Connection refused"
+Solution: Check Loki is running on port 3100
+
+
+USEFUL COMMANDS
+---------------
+# Stop all monitoring containers
+docker stop loki promtail grafana
+
+# Remove containers
+docker rm loki promtail grafana
+
+# View Loki logs
+docker logs loki
+
+# View Promtail logs
+docker logs promtail
